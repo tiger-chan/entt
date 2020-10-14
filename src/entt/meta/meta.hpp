@@ -11,6 +11,7 @@
 #include <utility>
 #include "../config/config.h"
 #include "../core/fwd.hpp"
+#include "../core/utility.hpp"
 #include "ctx.hpp"
 #include "internal.hpp"
 #include "range.hpp"
@@ -70,7 +71,6 @@ public:
     inline std::pair<iterator, bool> insert(iterator, meta_any);
     inline std::pair<iterator, bool> erase(iterator);
     [[nodiscard]] inline meta_any operator[](size_type);
-
     [[nodiscard]] inline explicit operator bool() const ENTT_NOEXCEPT;
 
 private:
@@ -137,7 +137,6 @@ public:
     inline bool insert(meta_any, meta_any);
     inline bool erase(meta_any);
     [[nodiscard]] inline iterator find(meta_any);
-
     [[nodiscard]] inline explicit operator bool() const ENTT_NOEXCEPT;
 
 private:
@@ -168,10 +167,14 @@ class meta_any {
     template<typename Type>
     [[nodiscard]] static meta_any dereference_operator(meta_any &any) {
         if constexpr(is_meta_pointer_like_v<Type>) {
-            if constexpr(std::is_const_v<std::remove_reference_t<decltype(*std::declval<Type>())>>) {
-                return *any.cast<Type>();
-            } else {
+            using pointed_type = std::remove_reference_t<decltype(*std::declval<Type>())>;
+
+            if constexpr(std::is_const_v<pointed_type> && std::is_copy_constructible_v<pointed_type>) {
+                return std::as_const(*any.cast<Type>());
+            } else if constexpr(!std::is_const_v<pointed_type>) {
                 return std::ref(*any.cast<Type>());
+            } else {
+                return {};
             }
         } else {
             return {};
@@ -201,7 +204,7 @@ public:
     meta_any() ENTT_NOEXCEPT
         : storage{},
           node{},
-          deref{},
+          deref{nullptr},
           seq_factory{nullptr},
           assoc_factory{nullptr}
     {}
@@ -296,6 +299,40 @@ public:
     [[nodiscard]] void * data() ENTT_NOEXCEPT {
         return storage.data();
     }
+
+    /**
+     * @brief Invokes the underlying function, if possible.
+     *
+     * @sa invoke
+     *
+     * @tparam Args Types of arguments to use to invoke the function.
+     * @param id Unique identifier.
+     * @param args Parameters to use to invoke the function.
+     * @return A meta any containing the returned value, if any.
+     */
+    template<typename... Args>
+    meta_any invoke(const id_type id, Args &&... args) const;
+
+    /**
+     * @brief Sets the value of a given variable.
+     *
+     * The type of the value must be such that a cast or conversion to the type
+     * of the variable is possible. Otherwise, invoking the setter does nothing.
+     *
+     * @tparam Type Type of value to assign.
+     * @param id Unique identifier.
+     * @param value Parameter to use to set the underlying variable.
+     * @return True in case of success, false otherwise.
+     */
+    template<typename Type>
+    bool set(const id_type id, Type &&value) const;
+
+    /**
+     * @brief Gets the value of a given variable.
+     * @param id Unique identifier.
+     * @return A meta any containing the value of the underlying variable.
+     */
+    [[nodiscard]] meta_any get(const id_type id) const;
 
     /**
      * @brief Tries to cast an instance to a given type.
@@ -469,7 +506,7 @@ public:
 
 private:
     internal::meta_storage storage;
-    const internal::meta_type_node *node;
+    internal::meta_type_node *node;
     dereference_operator_type *deref;
     meta_sequence_container(* seq_factory)(void *);
     meta_associative_container(* assoc_factory)(void *);
@@ -694,6 +731,19 @@ struct meta_ctor {
      * conversion to the required types is possible. Otherwise, an empty and
      * thus invalid wrapper is returned.
      *
+     * @param args Parameters to use to construct the instance.
+     * @param sz Number of parameters to use to construct the instance.
+     * @return A meta any containing the new instance, if any.
+     */
+    [[nodiscard]] meta_any invoke(meta_any * const args, const std::size_t sz) const {
+        return sz == size() ? node->invoke(args) : meta_any{};
+    }
+
+    /**
+     * @copybrief invoke
+     *
+     * @sa invoke
+     *
      * @tparam Args Types of arguments to use to construct the instance.
      * @param args Parameters to use to construct the instance.
      * @return A meta any containing the new instance, if any.
@@ -701,7 +751,7 @@ struct meta_ctor {
     template<typename... Args>
     [[nodiscard]] meta_any invoke([[maybe_unused]] Args &&... args) const {
         std::array<meta_any, sizeof...(Args)> arguments{std::forward<Args>(args)...};
-        return sizeof...(Args) == size() ? node->invoke(arguments.data()) : meta_any{};
+        return invoke(arguments.data(), sizeof...(Args));
     }
 
     /**
@@ -899,19 +949,29 @@ struct meta_func {
      * function. Otherwise, invoking the underlying function results in an
      * undefined behavior.
      *
+     * @param instance An opaque instance of the underlying type.
+     * @param args Parameters to use to invoke the function.
+     * @param sz Number of parameters to use to invoke the function.
+     * @return A meta any containing the returned value, if any.
+     */
+    meta_any invoke(meta_handle instance, meta_any * const args, const std::size_t sz) const {
+        return sz == size() ? node->invoke(instance, args) : meta_any{};
+    }
+
+    /**
+     * @copybrief invoke
+     *
+     * @sa invoke
+     *
      * @tparam Args Types of arguments to use to invoke the function.
      * @param instance An opaque instance of the underlying type.
      * @param args Parameters to use to invoke the function.
-     * @return A meta any containing the returned value, if any.
+     * @return A meta any containing the new instance, if any.
      */
     template<typename... Args>
     meta_any invoke(meta_handle instance, Args &&... args) const {
-        if(sizeof...(Args) == size()) {
-            std::array<meta_any, sizeof...(Args)> arguments{std::forward<Args>(args)...};
-            return node->invoke(std::move(instance), arguments.data());
-        } else {
-            return meta_any{};
-        }
+        std::array<meta_any, sizeof...(Args)> arguments{std::forward<Args>(args)...};
+        return invoke(instance, arguments.data(), sizeof...(Args));
     }
 
     /*! @copydoc meta_ctor::prop */
@@ -964,7 +1024,7 @@ public:
     using size_type = typename node_type::size_type;
 
     /*! @copydoc meta_prop::meta_prop */
-    meta_type(const node_type *curr = nullptr) ENTT_NOEXCEPT
+    meta_type(node_type *curr = nullptr) ENTT_NOEXCEPT
         : node{curr}
     {}
 
@@ -1254,6 +1314,25 @@ public:
      * conversion to the required types is possible. Otherwise, an empty and
      * thus invalid wrapper is returned.
      *
+     * @param args Parameters to use to construct the instance.
+     * @param sz Number of parameters to use to construct the instance.
+     * @return A meta any containing the new instance, if any.
+     */
+    [[nodiscard]] meta_any construct(meta_any * const args, const std::size_t sz) const {
+        meta_any any{};
+
+        internal::find_if<&node_type::ctor>([args, sz, &any](const auto *curr) {
+            return (curr->size == sz) && (any = curr->invoke(args));
+        }, node);
+
+        return any;
+    }
+
+    /**
+     * @copybrief construct
+     *
+     * @sa construct
+     *
      * @tparam Args Types of arguments to use to construct the instance.
      * @param args Parameters to use to construct the instance.
      * @return A meta any containing the new instance, if any.
@@ -1261,13 +1340,81 @@ public:
     template<typename... Args>
     [[nodiscard]] meta_any construct(Args &&... args) const {
         std::array<meta_any, sizeof...(Args)> arguments{std::forward<Args>(args)...};
-        meta_any any{};
+        return construct(arguments.data(), sizeof...(Args));
+    }
 
-        internal::find_if<&node_type::ctor>([&arguments, &any](const auto *curr) {
-            return (curr->size == sizeof...(args)) && (any = curr->invoke(arguments.data()));
-        }, node);
+    /**
+     * @brief Invokes the function with the given identifier, if possible.
+     *
+     * To invoke a meta function, the parameters must be such that a cast or
+     * conversion to the required types is possible. Otherwise, an empty and
+     * thus invalid wrapper is returned.<br/>
+     * It must be possible to cast the instance to the parent type of the meta
+     * function. Otherwise, invoking the underlying function results in an
+     * undefined behavior.
+     *
+     * @param id Unique identifier.
+     * @param instance An opaque instance of the underlying type.
+     * @param args Parameters to use to invoke the function.
+     * @param sz Number of parameters to use to invoke the function.
+     * @return A meta any containing the returned value, if any.
+     */
+    meta_any invoke(const id_type id, meta_handle instance, meta_any * const args, const std::size_t sz) const {
+        auto const candidate = func(id);
+        return candidate ? candidate.invoke(std::move(instance), args, sz) : meta_any{};
+    }
 
-        return any;
+    /**
+     * @copybrief invoke
+     *
+     * @sa invoke
+     *
+     * @param id Unique identifier.
+     * @tparam Args Types of arguments to use to invoke the function.
+     * @param instance An opaque instance of the underlying type.
+     * @param args Parameters to use to invoke the function.
+     * @return A meta any containing the new instance, if any.
+     */
+    template<typename... Args>
+    meta_any invoke(const id_type id, meta_handle instance, Args &&... args) const {
+        std::array<meta_any, sizeof...(Args)> arguments{std::forward<Args>(args)...};
+        return invoke(id, std::move(instance), arguments.data(), sizeof...(Args));
+    }
+
+    /**
+     * @brief Sets the value of a given variable.
+     *
+     * It must be possible to cast the instance to the parent type of the meta
+     * data. Otherwise, invoking the setter results in an undefined
+     * behavior.<br/>
+     * The type of the value must be such that a cast or conversion to the type
+     * of the variable is possible. Otherwise, invoking the setter does nothing.
+     *
+     * @tparam Type Type of value to assign.
+     * @param id Unique identifier.
+     * @param instance An opaque instance of the underlying type.
+     * @param value Parameter to use to set the underlying variable.
+     * @return True in case of success, false otherwise.
+     */
+    template<typename Type>
+    bool set(const id_type id, meta_handle instance, Type &&value) const {
+        auto const candidate = data(id);
+        return candidate ? candidate.set(std::move(instance), std::forward<Type>(value)) : false;
+    }
+
+    /**
+     * @brief Gets the value of a given variable.
+     *
+     * It must be possible to cast the instance to the parent type of the meta
+     * data. Otherwise, invoking the getter results in an undefined behavior.
+     *
+     * @param id Unique identifier.
+     * @param instance An opaque instance of the underlying type.
+     * @return A meta any containing the value of the underlying variable.
+     */
+    [[nodiscard]] meta_any get(const id_type id, meta_handle instance) const {
+        auto const candidate = data(id);
+        return candidate ? candidate.get(std::move(instance)) : meta_any{};
     }
 
     /**
@@ -1310,13 +1457,51 @@ public:
         return (!node && !other.node) || (node && other.node && node->type_id == other.node->type_id);
     }
 
-    /*! @brief Removes a meta object from the list of searchable types. */
-    void detach() ENTT_NOEXCEPT {
-        internal::meta_context::detach(node);
+    /**
+     * @brief Resets a meta type and all its parts.
+     *
+     * This function resets a meta type and all its data members, member
+     * functions and properties, as well as its constructors, destructors and
+     * conversion functions if any.<br/>
+     * Base classes aren't reset but the link between the two types is removed.
+     *
+     * The meta type is also removed from the list of searchable types.
+     */
+    void reset() ENTT_NOEXCEPT {
+        auto** it = internal::meta_context::global();
+
+        while (*it && *it != node) {
+            it = &(*it)->next;
+        }
+
+        if(*it) {
+            *it = (*it)->next;
+        }
+
+        const auto unregister_all = y_combinator{
+            [](auto &&self, auto **curr, auto... member) {
+                while(*curr) {
+                    auto *prev = *curr;
+                    (self(&(prev->*member)), ...);
+                    *curr = prev->next;
+                    prev->next = nullptr;
+                }
+            }
+        };
+
+        unregister_all(&node->prop);
+        unregister_all(&node->base);
+        unregister_all(&node->conv);
+        unregister_all(&node->ctor, &internal::meta_ctor_node::prop);
+        unregister_all(&node->data, &internal::meta_data_node::prop);
+        unregister_all(&node->func, &internal::meta_func_node::prop);
+
+        node->id = {};
+        node->dtor = nullptr;
     }
 
 private:
-    const node_type *node;
+    node_type *node;
 };
 
 
@@ -1333,6 +1518,23 @@ private:
 
 [[nodiscard]] inline meta_type meta_any::type() const ENTT_NOEXCEPT {
     return node;
+}
+
+
+template<typename... Args>
+meta_any meta_any::invoke(const id_type id, Args &&... args) const {
+    return type().invoke(id, *this, std::forward<Args>(args)...);
+}
+
+
+template<typename Type>
+bool meta_any::set(const id_type id, Type &&value) const {
+    return type().set(id, *this, std::forward<Type>(value));
+}
+
+
+[[nodiscard]] inline meta_any meta_any::get(const id_type id) const {
+    return type().get(id, *this);
 }
 
 
@@ -1396,17 +1598,17 @@ class meta_sequence_container::meta_iterator {
     /*! @brief A meta sequence container can access the underlying iterator. */
     friend class meta_sequence_container;
 
-    template<typename Type>
+    template<typename It>
     static void incr(meta_any any) {
-        ++any.cast<typename Type::iterator>();
+        ++any.cast<It>();
     }
 
-    template<typename Type>
+    template<typename It>
     [[nodiscard]] static meta_any deref(meta_any any) {
-        if constexpr(std::is_const_v<std::remove_reference_t<decltype(*std::declval<typename Type::iterator>())>>) {
-            return *any.cast<typename Type::iterator>();
+        if constexpr(std::is_const_v<std::remove_reference_t<decltype(*std::declval<It>())>>) {
+            return *any.cast<It>();
         } else {
-            return std::ref(*any.cast<typename Type::iterator>());
+            return std::ref(*any.cast<It>());
         }
     }
 
@@ -1427,13 +1629,13 @@ public:
 
     /**
      * @brief Constructs a meta iterator from a given iterator.
-     * @tparam Type Type of container to which the iterator belongs.
+     * @tparam It Type of actual iterator with which to build the meta iterator.
      * @param iter The actual iterator with which to build the meta iterator.
      */
-    template<typename Type>
-    meta_iterator(std::in_place_type_t<Type>, typename Type::iterator iter)
-        : next_fn{&incr<Type>},
-          get_fn{&deref<Type>},
+    template<typename It>
+    meta_iterator(It iter)
+        : next_fn{&incr<It>},
+          get_fn{&deref<It>},
           handle{std::move(iter)}
     {}
 
@@ -1445,7 +1647,7 @@ public:
     /*! @brief Post-increment operator. @return This iterator. */
     meta_iterator operator++(int) ENTT_NOEXCEPT {
         meta_iterator orig = *this;
-        return next_fn(handle.ref()), orig;
+        return ++(*this), orig;
     }
 
     /**
@@ -1512,17 +1714,17 @@ struct meta_sequence_container::meta_sequence_container_proxy {
     }
 
     [[nodiscard]] static iterator begin(void *container) {
-        return iterator{std::in_place_type<Type>, traits_type::begin(*static_cast<Type *>(container))};
+        return iterator{traits_type::begin(*static_cast<Type *>(container))};
     }
 
     [[nodiscard]] static iterator end(void *container) {
-        return iterator{std::in_place_type<Type>, traits_type::end(*static_cast<Type *>(container))};
+        return iterator{traits_type::end(*static_cast<Type *>(container))};
     }
 
     [[nodiscard]] static std::pair<iterator, bool> insert(void *container, iterator it, meta_any value) {
         if(const auto *v_ptr = value.try_cast<typename traits_type::value_type>(); v_ptr || value.convert<typename traits_type::value_type>()) {
             auto ret = traits_type::insert(*static_cast<Type *>(container), it.handle.cast<typename traits_type::iterator>(), v_ptr ? *v_ptr : value.cast<typename traits_type::value_type>());
-            return {iterator{std::in_place_type<Type>, std::move(ret.first)}, ret.second};
+            return {iterator{std::move(ret.first)}, ret.second};
         }
 
         return {};
@@ -1530,7 +1732,7 @@ struct meta_sequence_container::meta_sequence_container_proxy {
 
     [[nodiscard]] static std::pair<iterator, bool> erase(void *container, iterator it) {
         auto ret = traits_type::erase(*static_cast<Type *>(container), it.handle.cast<typename traits_type::iterator>());
-        return {iterator{std::in_place_type<Type>, std::move(ret.first)}, ret.second};
+        return {iterator{std::move(ret.first)}, ret.second};
     }
 
     [[nodiscard]] static meta_any get(void *container, size_type pos) {
@@ -1642,30 +1844,26 @@ inline std::pair<meta_sequence_container::iterator, bool> meta_sequence_containe
 
 /*! @brief Opaque iterator for meta associative containers. */
 class meta_associative_container::meta_iterator {
-    template<typename Type>
+    template<typename It>
     static void incr(meta_any any) {
-        ++any.cast<typename Type::iterator>();
+        ++any.cast<It>();
     }
 
-    template<typename Type>
+    template<bool KeyOnly, typename It>
     [[nodiscard]] static meta_any key(meta_any any) {
-        if constexpr(is_key_only_meta_associative_container_v<Type>) {
-            return *any.cast<typename Type::iterator>();
+        if constexpr(KeyOnly) {
+            return *any.cast<It>();
         } else {
-            return any.cast<typename Type::iterator>()->first;
+            return any.cast<It>()->first;
         }
     }
 
-    template<typename Type>
-    [[nodiscard]] static meta_any value(meta_any any) {
-        if constexpr(is_key_only_meta_associative_container_v<Type>) {
+    template<bool KeyOnly, typename It>
+    [[nodiscard]] static meta_any value([[maybe_unused]] meta_any any) {
+        if constexpr(KeyOnly) {
             return meta_any{};
         } else {
-            if constexpr(std::is_const_v<std::remove_reference_t<decltype(std::declval<typename Type::iterator>()->second)>>) {
-                return any.cast<typename Type::iterator>().second;
-            } else {
-                return std::ref(any.cast<typename Type::iterator>()->second);
-            }
+            return std::ref(any.cast<It>()->second);
         }
     }
 
@@ -1686,14 +1884,16 @@ public:
 
     /**
      * @brief Constructs a meta iterator from a given iterator.
-     * @tparam Type Type of container to which the iterator belongs.
+     * @tparam KeyOnly True if the associative container is also key-only, false
+     * otherwise.
+     * @tparam It Type of actual iterator with which to build the meta iterator.
      * @param iter The actual iterator with which to build the meta iterator.
      */
-    template<typename Type>
-    meta_iterator(std::in_place_type_t<Type>, typename Type::iterator iter)
-        : next_fn{&incr<Type>},
-          key_fn{&key<Type>},
-          value_fn{&value<Type>},
+    template<bool KeyOnly, typename It>
+    meta_iterator(std::integral_constant<bool, KeyOnly>, It iter)
+        : next_fn{&incr<It>},
+          key_fn{&key<KeyOnly, It>},
+          value_fn{&value<KeyOnly, It>},
           handle{std::move(iter)}
     {}
 
@@ -1705,7 +1905,7 @@ public:
     /*! @brief Post-increment operator. @return This iterator. */
     meta_iterator operator++(int) ENTT_NOEXCEPT {
         meta_iterator orig = *this;
-        return next_fn(handle.ref()), orig;
+        return ++(*this), orig;
     }
 
     /**
@@ -1781,11 +1981,11 @@ struct meta_associative_container::meta_associative_container_proxy {
     }
 
     [[nodiscard]] static iterator begin(void *container) {
-        return iterator{std::in_place_type<Type>, traits_type::begin(*static_cast<Type *>(container))};
+        return iterator{is_key_only_meta_associative_container<Type>{}, traits_type::begin(*static_cast<Type *>(container))};
     }
 
     [[nodiscard]] static iterator end(void *container) {
-        return iterator{std::in_place_type<Type>, traits_type::end(*static_cast<Type *>(container))};
+        return iterator{is_key_only_meta_associative_container<Type>{}, traits_type::end(*static_cast<Type *>(container))};
     }
 
     [[nodiscard]] static bool insert(void *container, meta_any key, meta_any value) {
@@ -1812,7 +2012,7 @@ struct meta_associative_container::meta_associative_container_proxy {
 
     [[nodiscard]] static iterator find(void *container, meta_any key) {
         if(const auto *k_ptr = key.try_cast<typename traits_type::key_type>(); k_ptr || key.convert<typename traits_type::key_type>()) {
-            return iterator{std::in_place_type<Type>, traits_type::find(*static_cast<Type *>(container), k_ptr ? *k_ptr : key.cast<typename traits_type::key_type>())};
+            return iterator{is_key_only_meta_associative_container<Type>{}, traits_type::find(*static_cast<Type *>(container), k_ptr ? *k_ptr : key.cast<typename traits_type::key_type>())};
         }
 
         return {};

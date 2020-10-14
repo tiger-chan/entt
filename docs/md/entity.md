@@ -364,9 +364,13 @@ registry.on_construct<position>().disconnect<&my_free_function>();
 registry.on_construct<position>().disconnect<&my_class::member>(instance);
 ```
 
-To be notified when components are destroyed, use the `on_destroy` member
+To be notified when a component is destroyed, use the `on_destroy` member
 function instead. Finally, the `on_update` member function will return a sink
-to which to connect listeners to observe changes.
+to which to connect listeners to observe changes.<br/>
+In the last case, given the way C++ works, it's also necessary to use specific
+member functions to allow the signal to be triggered. In particular, listeners
+attached to `on_update` will only be invoked following a call to `replace` or
+`patch`.
 
 The function type of a listener should be equivalent to the following:
 
@@ -495,6 +499,10 @@ There are two types of `matcher`s:
   entt::collector.update<sprite>();
   ```
 
+  _Updated_ in this case means that all listeners attached to `on_update` are
+  invoked. In order for this to happen, specific functions such as `patch` must
+  be used. Refer to the specific documentation for more details.
+
 * Grouping matcher: an observer will return at least all the living entities
   that would have entered the given group if it existed and that would have
   not yet left it.
@@ -532,8 +540,11 @@ one.
 
 ## Sorting: is it possible?
 
-Sorting entities and components is possible with `EnTT`.<br/>
-There are two functions that respond to slightly different needs:
+Sorting entities and components is possible with `EnTT`. In particular, it's
+feasible with an in-place algorithm that doesn't require memory allocations nor
+anything else and is therefore particularly convenient.<br/>
+With this in mind, there are two functions that respond to slightly different
+needs:
 
 * Components can be sorted either directly:
 
@@ -1207,7 +1218,8 @@ for(auto entity: view) {
 }
 ```
 
-Or rely on the `each` member functions to iterate both entities and components:
+Or rely on the `each` and `proxy` member functions to iterate both entities and
+components at once:
 
 ```cpp
 // through a callback
@@ -1216,18 +1228,23 @@ registry.view<position, velocity>().each([](auto entity, auto &pos, auto &vel) {
 });
 
 // using an input iterator
-for(auto &&[entity, pos, vel]: registry.view<position, velocity>().each()) {
+for(auto &&[entity, pos, vel]: registry.view<position, velocity>().proxy()) {
     // ...
 }
 ```
 
-The `each` member functions are highly optimized. Unless users want to iterate
-only entities or get only some of the components, this should be the preferred
-approach. Note that entities can also be excluded from the parameter list when
-received through a callback and this can improve even further the performance
-during iterations.<br/>
+Note that entities can also be excluded from the parameter list when received
+through a callback and this can improve even further the performance during
+iterations.<br/>
 Since they aren't explicitly instantiated, empty components aren't returned in
 any case.
+
+There is also a third method for iterating over entities and components for
+multi component views. It's a chunk based iteration and is made available by
+means of the `chunked` member function.<br/>
+Since this is a particular iteration method with fairly specific purposes, I
+recommend referring to the official documentation for more details and I won't
+further investigate the topic here.
 
 As a side note, in the case of single component views, `get` accepts but doesn't
 strictly require a template parameter, since the type is implicitly defined:
@@ -1264,7 +1281,7 @@ thrown away. The reasons for this go far beyond the scope of this document.<br/>
 To iterate a runtime view, either use it in a range-for loop:
 
 ```cpp
-entt::component types[] = { entt::type_info<position>::id(), entt::type_info<velocity>::id() };
+entt::id_type types[] = { entt::type_info<position>::id(), entt::type_info<velocity>::id() };
 auto view = registry.runtime_view(std::cbegin(types), std::cend(types));
 
 for(auto entity: view) {
@@ -1282,7 +1299,7 @@ for(auto entity: view) {
 Or rely on the `each` member function to iterate entities:
 
 ```cpp
-entt::component types[] = { entt::type_info<position>::id(), entt::type_info<velocity>::id() };
+entt::id_type types[] = { entt::type_info<position>::id(), entt::type_info<velocity>::id() };
 
 registry.runtime_view(std::cbegin(types), std::cend(types)).each([](auto entity) {
     // ...
@@ -1293,8 +1310,8 @@ Performance are exactly the same in both cases.<br/>
 Filtering entities by components is also supported for this kind of views:
 
 ```cpp
-entt::component components[] = { entt::type_info<position>::id() };
-entt::component filter[] = { entt::type_info<velocity>::id() };
+entt::id_type components[] = { entt::type_info<position>::id() };
+entt::id_type filter[] = { entt::type_info<velocity>::id() };
 auto view = registry.runtime_view(std::cbegin(components), std::cend(components), std::cbegin(filter), std::cend(filter));
 ```
 
@@ -1362,7 +1379,8 @@ for(auto entity: group) {
 }
 ```
 
-Or rely on the `each` member functions to iterate both entities and components:
+Or rely on the `each` and `proxy` member functions to iterate both entities and
+components at once:
 
 ```cpp
 // through a callback
@@ -1371,16 +1389,14 @@ registry.group<position>(entt::get<velocity>).each([](auto entity, auto &pos, au
 });
 
 // using an input iterator
-for(auto &&[entity, pos, vel]: registry.group<position>(entt::get<velocity>).each()) {
+for(auto &&[entity, pos, vel]: registry.group<position>(entt::get<velocity>).proxy()) {
     // ...
 }
 ```
 
-The `each` member functions are highly optimized. Unless users want to iterate
-only entities or get only some of the components, this should be the preferred
-approach. Note that entities can also be excluded from the parameter list when
-received through a callback and this can improve even further the performance
-during iterations.<br/>
+Note that entities can also be excluded from the parameter list when received
+through a callback and this can improve even further the performance during
+iterations.<br/>
 Since they aren't explicitly instantiated, empty components aren't returned in
 any case.
 

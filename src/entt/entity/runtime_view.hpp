@@ -63,9 +63,9 @@ class basic_runtime_view {
     class view_iterator final {
         friend class basic_runtime_view<Entity>;
 
-        view_iterator(const std::vector<const sparse_set<Entity> *> &cpools, const std::vector<const sparse_set<Entity> *> &exclude, underlying_iterator curr) ENTT_NOEXCEPT
+        view_iterator(const std::vector<const sparse_set<Entity> *> &cpools, const std::vector<const sparse_set<Entity> *> &ignore, underlying_iterator curr) ENTT_NOEXCEPT
             : pools{&cpools},
-              filter{&exclude},
+              filter{&ignore},
               it{curr}
         {
             if(it != (*pools)[0]->end() && !valid()) {
@@ -94,7 +94,7 @@ class basic_runtime_view {
 
         view_iterator operator++(int) {
             view_iterator orig = *this;
-            return operator++(), orig;
+            return ++(*this), orig;
         }
 
         view_iterator & operator--() ENTT_NOEXCEPT {
@@ -129,9 +129,9 @@ class basic_runtime_view {
         underlying_iterator it;
     };
 
-    basic_runtime_view(std::vector<const sparse_set<Entity> *> cpools, std::vector<const sparse_set<Entity> *> exclude) ENTT_NOEXCEPT
+    basic_runtime_view(std::vector<const sparse_set<Entity> *> cpools, std::vector<const sparse_set<Entity> *> epools) ENTT_NOEXCEPT
         : pools{std::move(cpools)},
-          filter{std::move(exclude)}
+          filter{std::move(epools)}
     {
         const auto it = std::min_element(pools.begin(), pools.end(), [](const auto *lhs, const auto *rhs) {
             return (!lhs && rhs) || (lhs && rhs && lhs->size() < rhs->size());

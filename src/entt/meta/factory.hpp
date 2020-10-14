@@ -12,7 +12,6 @@
 #include "../core/fwd.hpp"
 #include "../core/type_info.hpp"
 #include "../core/type_traits.hpp"
-#include "../core/utility.hpp"
 #include "internal.hpp"
 #include "meta.hpp"
 #include "policy.hpp"
@@ -60,6 +59,9 @@ to_meta_function_helper(Ret(Class:: *)(Args...));
 template<typename Ret, typename... Args>
 constexpr meta_function_helper<Ret(Args...)>
 to_meta_function_helper(Ret(*)(Args...));
+
+
+constexpr void to_meta_function_helper(...);
 
 
 template<typename Candidate>
@@ -690,46 +692,6 @@ public:
         type->func = &node;
 
         return meta_factory<Type, std::integral_constant<decltype(Candidate), Candidate>>{&node.prop};
-    }
-
-    /**
-     * @brief Resets a meta type and all its parts.
-     *
-     * This function resets a meta type and all its data members, member
-     * functions and properties, as well as its constructors, destructors and
-     * conversion functions if any.<br/>
-     * Base classes aren't reset but the link between the two types is removed.
-     *
-     * @return An extended meta factory for the given type.
-     */
-    auto reset() ENTT_NOEXCEPT {
-        auto * const node = internal::meta_info<Type>::resolve();
-
-        internal::meta_context::detach(node);
-
-        const auto unregister_all = y_combinator{
-            [](auto &&self, auto **curr, auto... member) {
-                while(*curr) {
-                    auto *prev = *curr;
-                    (self(&(prev->*member)), ...);
-                    *curr = prev->next;
-                    prev->next = nullptr;
-                }
-            }
-        };
-
-        unregister_all(&node->prop);
-        unregister_all(&node->base);
-        unregister_all(&node->conv);
-        unregister_all(&node->ctor, &internal::meta_ctor_node::prop);
-        unregister_all(&node->data, &internal::meta_data_node::prop);
-        unregister_all(&node->func, &internal::meta_func_node::prop);
-
-        node->id = {};
-        node->next = nullptr;
-        node->dtor = nullptr;
-
-        return meta_factory<Type, Type>{&node->prop};
     }
 };
 

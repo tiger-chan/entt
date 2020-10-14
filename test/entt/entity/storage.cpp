@@ -25,7 +25,7 @@ TEST(Storage, Functionalities) {
 
     pool.reserve(42);
 
-    ASSERT_EQ(pool.capacity(), 42);
+    ASSERT_EQ(pool.capacity(), 42u);
     ASSERT_TRUE(pool.empty());
     ASSERT_EQ(pool.size(), 0u);
     ASSERT_EQ(std::as_const(pool).begin(), std::as_const(pool).end());
@@ -69,11 +69,11 @@ TEST(Storage, Functionalities) {
     ASSERT_FALSE(pool.contains(entt::entity{0}));
     ASSERT_FALSE(pool.contains(entt::entity{41}));
 
-    ASSERT_EQ(pool.capacity(), 42);
+    ASSERT_EQ(pool.capacity(), 42u);
 
     pool.shrink_to_fit();
 
-    ASSERT_EQ(pool.capacity(), 0);
+    ASSERT_EQ(pool.capacity(), 0u);
 
     (void)entt::storage<entt::entity, int>{std::move(pool)};
     entt::storage<entt::entity, int> other;
@@ -216,6 +216,90 @@ TEST(Storage, ConstIterator) {
 
     ASSERT_GT(cend, cbegin);
     ASSERT_GE(cend, pool.cend());
+}
+
+TEST(Storage, ReverseIterator) {
+    using reverse_iterator = typename entt::storage<entt::entity, boxed_int>::reverse_iterator;
+
+    entt::storage<entt::entity, boxed_int> pool;
+    pool.emplace(entt::entity{3}, 42);
+
+    reverse_iterator end{pool.rbegin()};
+    reverse_iterator begin{};
+    begin = pool.rend();
+    std::swap(begin, end);
+
+    ASSERT_EQ(begin, pool.rbegin());
+    ASSERT_EQ(end, pool.rend());
+    ASSERT_NE(begin, end);
+
+    ASSERT_EQ(begin++, pool.rbegin());
+    ASSERT_EQ(begin--, pool.rend());
+
+    ASSERT_EQ(begin+1, pool.rend());
+    ASSERT_EQ(end-1, pool.rbegin());
+
+    ASSERT_EQ(++begin, pool.rend());
+    ASSERT_EQ(--begin, pool.rbegin());
+
+    ASSERT_EQ(begin += 1, pool.rend());
+    ASSERT_EQ(begin -= 1, pool.rbegin());
+
+    ASSERT_EQ(begin + (end - begin), pool.rend());
+    ASSERT_EQ(begin - (begin - end), pool.rend());
+
+    ASSERT_EQ(end - (end - begin), pool.rbegin());
+    ASSERT_EQ(end + (begin - end), pool.rbegin());
+
+    ASSERT_EQ(begin[0].value, pool.rbegin()->value);
+
+    ASSERT_LT(begin, end);
+    ASSERT_LE(begin, pool.rbegin());
+
+    ASSERT_GT(end, begin);
+    ASSERT_GE(end, pool.rend());
+}
+
+TEST(Storage, ConstReverseIterator) {
+    using const_reverse_iterator = typename entt::storage<entt::entity, boxed_int>::const_reverse_iterator;
+
+    entt::storage<entt::entity, boxed_int> pool;
+    pool.emplace(entt::entity{3}, 42);
+
+    const_reverse_iterator cend{pool.crbegin()};
+    const_reverse_iterator cbegin{};
+    cbegin = pool.crend();
+    std::swap(cbegin, cend);
+
+    ASSERT_EQ(cbegin, pool.crbegin());
+    ASSERT_EQ(cend, pool.crend());
+    ASSERT_NE(cbegin, cend);
+
+    ASSERT_EQ(cbegin++, pool.crbegin());
+    ASSERT_EQ(cbegin--, pool.crend());
+
+    ASSERT_EQ(cbegin+1, pool.crend());
+    ASSERT_EQ(cend-1, pool.crbegin());
+
+    ASSERT_EQ(++cbegin, pool.crend());
+    ASSERT_EQ(--cbegin, pool.crbegin());
+
+    ASSERT_EQ(cbegin += 1, pool.crend());
+    ASSERT_EQ(cbegin -= 1, pool.crbegin());
+
+    ASSERT_EQ(cbegin + (cend - cbegin), pool.crend());
+    ASSERT_EQ(cbegin - (cbegin - cend), pool.crend());
+
+    ASSERT_EQ(cend - (cend - cbegin), pool.crbegin());
+    ASSERT_EQ(cend + (cbegin - cend), pool.crbegin());
+
+    ASSERT_EQ(cbegin[0].value, pool.crbegin()->value);
+
+    ASSERT_LT(cbegin, cend);
+    ASSERT_LE(cbegin, pool.crbegin());
+
+    ASSERT_GT(cend, cbegin);
+    ASSERT_GE(cend, pool.crend());
 }
 
 TEST(Storage, Raw) {

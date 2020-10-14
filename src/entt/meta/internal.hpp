@@ -313,7 +313,7 @@ class meta_range {
 
         range_iterator operator++(int) ENTT_NOEXCEPT {
             range_iterator orig = *this;
-            return operator++(), orig;
+            return ++(*this), orig;
         }
 
         [[nodiscard]] bool operator==(const range_iterator &other) const ENTT_NOEXCEPT {
@@ -386,7 +386,7 @@ template<typename Type>
 class ENTT_API meta_node {
     static_assert(std::is_same_v<Type, std::remove_cv_t<std::remove_reference_t<Type>>>, "Invalid type");
 
-    [[nodiscard]] static auto compare(const void *lhs, const void *rhs) {
+    [[nodiscard]] static bool compare(const void *lhs, const void *rhs) {
         if constexpr(!std::is_function_v<Type> && is_equality_comparable_v<Type>) {
             return *static_cast<const Type *>(lhs) == *static_cast<const Type *>(rhs);
         } else {

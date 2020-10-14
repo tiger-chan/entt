@@ -27,22 +27,18 @@ struct listener {
     }
 
     template<typename Component>
-    void incr(const entt::registry &registry, entt::entity entity) {
-        ASSERT_TRUE(registry.valid(entity));
-        ASSERT_TRUE(registry.has<Component>(entity));
+    void incr(const entt::registry &, entt::entity entity) {
         last = entity;
         ++counter;
     }
 
     template<typename Component>
-    void decr(const entt::registry &registry, entt::entity entity) {
-        ASSERT_TRUE(registry.valid(entity));
-        ASSERT_TRUE(registry.has<Component>(entity));
+    void decr(const entt::registry &, entt::entity entity) {
         last = entity;
         --counter;
     }
 
-    entt::entity last;
+    entt::entity last{entt::null};
     int counter{0};
 };
 
